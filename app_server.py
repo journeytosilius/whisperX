@@ -6,8 +6,10 @@ import torchaudio
 
 app = FastAPI()
 
+device = "cuda"
+
 # Load model on startup
-model = whisperx.load_model("large-v2", device="cpu")  # Change to "cuda" if running with GPU
+model = whisperx.load_model("large-v2", device=device)
 
 @app.post("/transcribe")
 async def transcribe_audio(file: UploadFile = File(...)):
@@ -24,8 +26,8 @@ async def transcribe_audio(file: UploadFile = File(...)):
         result = model.transcribe(audio)
 
         # Align words
-        model_aligned = whisperx.load_align_model(language_code=result["language"], device="cpu")
-        result_aligned = whisperx.align(result["segments"], model_aligned, audio, device="cpu")
+        model_aligned = whisperx.load_align_model(language_code=result["language"], device=device)
+        result_aligned = whisperx.align(result["segments"], model_aligned, audio, device=device)
 
         return result_aligned  # Contains 'segments' and 'word_segments' with timestamps
 
