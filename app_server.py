@@ -1,0 +1,33 @@
+from fastapi import FastAPI, UploadFile, File, HTTPException
+import whisperx
+import tempfile
+import os
+import torchaudio
+
+app = FastAPI()
+
+# Load model on startup
+model = whisperx.load_model("large-v2", device="cpu")  # Change to "cuda" if running with GPU
+
+@app.post("/transcribe")
+async def transcribe_audio(file: UploadFile = File(...)):
+    if not file.filename.endswith((".mp3", ".wav", ".m4a", ".ogg")):
+        raise HTTPException(status_code=400, detail="Unsupported file type.")
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+        tmp.write(await file.read())
+        tmp_path = tmp.name
+
+    try:
+        # Transcribe
+        audio = whisperx.load_audio(tmp_path)
+        result = model.transcribe(audio)
+
+        # Align words
+        model_aligned = whisperx.load_align_model(language_code=result["language"], device="cpu")
+        result_aligned = whisperx.align(result["segments"], model_aligned, audio, device="cpu")
+
+        return result_aligned  # Contains 'segments' and 'word_segments' with timestamps
+
+    finally:
+        os.remove(tmp_path)
