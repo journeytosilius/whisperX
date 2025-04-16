@@ -1,35 +1,34 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 import whisperx
-import tempfile
 import os
-import torchaudio
 
 app = FastAPI()
 
 device = "cuda"
-
-# Load model on startup
 model = whisperx.load_model("large-v2", device=device)
 
-@app.post("/transcribe")
-async def transcribe_audio(file: UploadFile = File(...)):
-    if not file.filename.endswith((".mp3", ".wav", ".m4a", ".ogg")):
-        raise HTTPException(status_code=400, detail="Unsupported file type.")
+class TranscriptionRequest(BaseModel):
+    path: str
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
-        tmp.write(await file.read())
-        tmp_path = tmp.name
+@app.post("/transcribe")
+async def transcribe_audio_path(req: TranscriptionRequest):
+    print("received path:", req.path)
+    if not os.path.exists(req.path):
+        raise HTTPException(status_code=404, detail="Audio file not found.")
 
     try:
-        # Transcribe
-        audio = whisperx.load_audio(tmp_path)
+        audio = whisperx.load_audio(req.path)
         result = model.transcribe(audio)
+        print(result["segments"]) # before alignment
 
         # Align words
-        model_aligned = whisperx.load_align_model(language_code=result["language"], device=device)
-        result_aligned = whisperx.align(result["segments"], model_aligned, audio, device=device)
+        model_aligned, metadata = whisperx.load_align_model(language_code=result["language"], device=device)
+        result_aligned = whisperx.align(result["segments"], model=model_aligned, align_model_metadata=metadata, audio=audio, device=device)
+        
+        print(result_aligned["segments"]) # after alignment
 
-        return result_aligned  # Contains 'segments' and 'word_segments' with timestamps
-
-    finally:
-        os.remove(tmp_path)
+        return result_aligned  # Contains 'segments' and 'word_segments'
+    except Exception as e:
+        print(e)
+        raise HTTPException(status_code=500, detail=f"Transcription error: {str(e)}")
