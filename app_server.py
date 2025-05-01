@@ -2,17 +2,15 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import whisperx
 import os
-import torch  # Import torch for cleanup
+import torch
 
 app = FastAPI()
 
 device = "cuda"
-model = whisperx.load_model("large-v2", device=device)
-
+AUDIO_DIR = "/app/output"
 
 class TranscriptionRequest(BaseModel):
     path: str
-
 
 class AlignmentRequest(BaseModel):
     audio_path: str
@@ -20,21 +18,23 @@ class AlignmentRequest(BaseModel):
 
 @app.post("/transcribe")
 async def transcribe_audio_path(req: TranscriptionRequest):
-    print("received path:", req.path)
-    if not os.path.exists(req.path):
+    full_path = os.path.join(AUDIO_DIR, req.path)
+    print("received path:", full_path)
+
+    if not os.path.exists(full_path):
         raise HTTPException(status_code=404, detail="Audio file not found.")
 
     try:
-        audio = whisperx.load_audio(req.path)
-        result = model.transcribe(audio)
-        print(result["segments"])  # before alignment
+        audio = whisperx.load_audio(full_path)
 
-        # Load alignment model
+        # 🔹 Load the model only when needed
+        model = whisperx.load_model("large-v2", device=device)
+        result = model.transcribe(audio)
+        print(result["segments"])
+
         model_aligned, metadata = whisperx.load_align_model(
             language_code=result["language"], device=device
         )
-
-        # Perform alignment
         result_aligned = whisperx.align(
             result["segments"],
             model=model_aligned,
@@ -43,9 +43,7 @@ async def transcribe_audio_path(req: TranscriptionRequest):
             device=device,
         )
 
-        # Clean up GPU memory after successful inference
-        del model_aligned
-        del metadata
+        del model, model_aligned, metadata
         torch.cuda.empty_cache()
 
         return result_aligned
@@ -54,26 +52,36 @@ async def transcribe_audio_path(req: TranscriptionRequest):
         print(e)
         raise HTTPException(status_code=500, detail=f"Transcription error: {str(e)}")
 
-
 @app.post("/align")
 async def align_custom_script(req: AlignmentRequest):
-    print("Aligning with custom narration:", req.audio_path)
-    if not os.path.exists(req.audio_path):
+    full_path = os.path.join(AUDIO_DIR, req.audio_path)
+    print("Aligning with custom narration:", full_path)
+
+    if not os.path.exists(full_path):
         raise HTTPException(status_code=404, detail="Audio file not found.")
 
     try:
-        # Load and transcribe just to get end time
-        audio = whisperx.load_audio(req.audio_path)
+        audio = whisperx.load_audio(full_path)
+
+        # 🔹 Load WhisperX for language detection (if needed)
+        model = whisperx.load_model("large-v2", device=device)
         result = model.transcribe(audio)
         end_time = result["segments"][-1]["end"]
 
-        # Use the custom narration
         segments = [{"text": req.narration_text, "start": 0, "end": end_time}]
 
-        model_aligned, metadata = whisperx.load_align_model(language_code=result["language"], device=device)
-        result_aligned = whisperx.align(segments, model=model_aligned, align_model_metadata=metadata, audio=audio, device=device)
+        model_aligned, metadata = whisperx.load_align_model(
+            language_code=result["language"], device=device
+        )
+        result_aligned = whisperx.align(
+            segments,
+            model=model_aligned,
+            align_model_metadata=metadata,
+            audio=audio,
+            device=device,
+        )
 
-        del model_aligned, metadata
+        del model, model_aligned, metadata
         torch.cuda.empty_cache()
 
         return result_aligned
