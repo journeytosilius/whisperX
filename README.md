@@ -308,3 +308,7 @@ If you use this in your research, please cite the paper:
   year={2023}
 }
 ```
+
+
+
+ docker build -t whisperx-api:latest .
